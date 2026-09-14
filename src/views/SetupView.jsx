@@ -6,6 +6,8 @@ import {
   CheckCircle, AlertCircle, Image as ImageIcon, X, Sparkles, Hash
 } from 'lucide-react'
 
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+
 // ─── Skill Level to Base Price Enum ───────────────────────────────────────
 const SKILL_LEVEL_PRICES = {
   BEGINNER: 2,
@@ -315,7 +317,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
     })
 
     try {
-      await axios.post('http://localhost:8080/api/set-config', {
+      await axios.post(`${API}/api/set-config`, {
         image_path: imagePath.trim(),
         teams: teamNames,
         base_purse: parseInt(basePurse),

@@ -1,5 +1,11 @@
 # 🏏 Cricket Auction Platform — Frontend
 
+[![Deploy to GitHub Pages](https://github.com/thepavansai/cric-auction/actions/workflows/deploy.yml/badge.svg)](https://github.com/thepavansai/cric-auction/actions/workflows/deploy.yml)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-brightgreen?logo=github)](https://thepavansai.github.io/cric-auction/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+> **Live Application:** [https://thepavansai.github.io/cric-auction/](https://thepavansai.github.io/cric-auction/)
+
 A high-performance, real-time cricket player auction console built with **React 18**, **Vite**, and **Tailwind CSS**. Designed for live IPL-style bidding events with zero database overhead, full dark/light theme support, custom tournament branding, and dynamic Excel roster management.
 
 Pairs seamlessly with the [cric-auction-backend](https://github.com/thepavansai/cric-auction-backend) FastAPI service.
@@ -48,9 +54,9 @@ Pairs seamlessly with the [cric-auction-backend](https://github.com/thepavansai/
 
 1. **Clone the repository:**
    ```bash
-   git clone git@github.com:thepavansai/cric-auction-frontend.git
-   # or: git clone https://github.com/thepavansai/cric-auction-frontend.git
-   cd cric-auction-frontend
+   git clone git@github.com:thepavansai/cric-auction.git
+   # or: git clone https://github.com/thepavansai/cric-auction.git
+   cd cric-auction
    ```
 
 2. **Install dependencies:**

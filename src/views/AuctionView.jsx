@@ -5,7 +5,7 @@ import {
   TrendingDown, CheckCircle, AlertCircle, RefreshCw, RotateCcw
 } from 'lucide-react'
 
-const API = 'http://localhost:8080'
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 const AUCTION_DRAFT_KEY = 'cricket-auction-auction-draft'
 const BIDS_KEY = 'cricket-auction-bid-snapshots'
 
