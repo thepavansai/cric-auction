@@ -287,6 +287,10 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
     if (!teamsInput.trim()) { setErrorMsg('At least one team name is required'); return }
     if (parsedRoster.length === 0) { setErrorMsg('Please upload a valid roster Excel file'); return }
 
+    const purse = parseFloat(basePurse)
+    if (!Number.isFinite(purse) || purse <= 0) { setErrorMsg('Starting purse must be greater than zero'); return }
+    if (Math.round(purse * 10) !== purse * 10) { setErrorMsg('Starting purse can have at most 1 decimal place'); return }
+
     const captainPlayerIds = parseList(captainPlayerIdsInput)
     const captainNames = parseList(captainNamesInput)
     if (captainPlayerIds.length === 0 && captainNames.length === 0) {
@@ -320,7 +324,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
       await axios.post(`${API}/api/set-config`, {
         image_path: imagePath.trim(),
         teams: teamNames,
-        base_purse: parseInt(basePurse),
+        base_purse: purse,
         captain_ids: captainPlayerIds,
         captain_names: captainNames
       })
@@ -329,7 +333,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
         onComplete(rosterWithCaptains, {
           image_path: imagePath.trim(),
           teams: teamNames,
-          base_purse: parseInt(basePurse),
+          base_purse: purse,
           captain_ids: captainPlayerIds,
           captain_names: captainNames
         })
@@ -515,9 +519,12 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
             className="themed-control"
             type="number"
             value={basePurse}
-            onChange={e => setBasePurse(e.target.value)}
-            min={1}
-            step={1}
+            onChange={e => {
+              const next = e.target.value
+              if (next === '' || /^\d*\.?\d?$/.test(next)) setBasePurse(next)
+            }}
+            min={0.1}
+            step="0.1"
             style={inputStyle}
           />
         </Field>
