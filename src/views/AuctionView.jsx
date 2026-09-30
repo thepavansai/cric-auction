@@ -484,7 +484,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
     const forceSell = Boolean(options.forceSell)
 
     if (!selectedTeam) { setBidMsg('Select a team'); setBidStatus('error'); return }
-    const parsedBid = parseInt(bidAmount, 10)
+    const parsedBid = parseFloat(bidAmount)
     if (!currentPlayer) return
     const amount = Number.isFinite(parsedBid) && parsedBid > 0
       ? parsedBid
@@ -492,6 +492,12 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
 
     if (!amount || amount <= 0) {
       setBidMsg('Enter a valid bid amount')
+      setBidStatus('error')
+      return
+    }
+
+    if (Math.round(amount * 10) !== amount * 10) {
+      setBidMsg('Bid can have at most 1 decimal place')
       setBidStatus('error')
       return
     }
@@ -688,27 +694,13 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
       return
     }
 
-    // No fresh players left — check if any skipped (Visited + Unsold) players remain
-    const skippedPlayers = phasePlayers.filter(p => p.Visited && p.Status !== 'Sold')
-
-    if (skippedPlayers.length === 0) {
-      // Truly done — no fresh, no skipped
-      onDone(updatedRoster)
-      return
-    }
-
-    // Re-queue skipped players by resetting their Visited flag
-    const rosterWithSkippedReset = updatedRoster.map(p =>
-      (!p.IsCaptain && p.Visited && p.Status !== 'Sold')
-        ? { ...p, Visited: false }
-        : p
-    )
-    setRoster(rosterWithSkippedReset)
-    setCurrentPlayerID(skippedPlayers[0].ID)
+    // Skipped players stay Unsold — the re-auction round re-queues them, not this pass
+    onDone(updatedRoster)
   }
 
   const progress = phaseRoster.length > 0 ? Math.round((soldCount / phaseRoster.length) * 100) : 100
   const isActionLocked = bidStatus === 'loading' || bidStatus === 'success' || bidStatus === 'skip'
+  const basePurse = Number(config?.base_purse) || 100
 
   advancePlayerRef.current = advancePlayer
 
@@ -751,8 +743,6 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
     .slice(0, 2)
     .toUpperCase()
 
-  const quickBidIncrements = [1, 2, 5, 10]
-
   return (
     <div style={{
       display: 'flex',
@@ -760,20 +750,20 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
       height: 'calc(100vh - 56px)',
       overflow: 'hidden'
     }}>
-      {/* ── TOP ZONE: Player Showcase Card (45%) + Bidding Console (55%) ── */}
+      {/* ── TOP ZONE: Player Showcase Card (58%) + Bidding Console (42%) ── */}
       <div style={{
         height: '35%',
         minHeight: '230px',
         maxHeight: '360px',
         flexShrink: 0,
         display: 'grid',
-        gridTemplateColumns: '45% 1fr',
+        gridTemplateColumns: '58% 1fr',
         padding: '10px 14px',
         gap: '12px',
         borderBottom: '1px solid var(--border)',
         overflow: 'hidden'
       }}>
-        {/* Left: Player Showcase Card (45% width) */}
+        {/* Left: Player Showcase Card (58% width) */}
         <div style={{
           minWidth: 0,
           background: 'var(--card)',
@@ -919,7 +909,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
           </div>
         </div>
 
-        {/* Right: Bidding Console Card (60% width cockpit) */}
+        {/* Right: Bidding Console Card */}
         <div style={{
           background: 'var(--card)',
           border: '1px solid var(--border)',
@@ -954,7 +944,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
             </div>
           </div>
 
-          {/* Console Body: 2 Sub-Columns (Inputs & Increments on left, Big Actions on right) */}
+          {/* Console Body: 2 Sub-Columns (Inputs on left, Big Actions on right) */}
           <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr', gap: '16px', alignItems: 'center', flex: 1, minHeight: 0 }}>
             {/* Left Sub-Col: Team & Bid Controls */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -990,10 +980,13 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
                     className="themed-control"
                     type="number"
                     value={bidAmount}
-                    onChange={e => setBidAmount(e.target.value)}
+                    onChange={e => {
+                      const next = e.target.value
+                      if (next === '' || /^\d*\.?\d?$/.test(next)) setBidAmount(next)
+                    }}
                     placeholder={`Min ${formatInLakhs(currentPlayer.BasePrice)}`}
                     min={currentPlayer.BasePrice}
-                    step={1}
+                    step="0.1"
                     style={{
                       width: '100%', padding: '7px 8px',
                       background: 'var(--bg2)', border: '1px solid var(--border)',
@@ -1002,34 +995,6 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
                     }}
                   />
                 </div>
-              </div>
-
-              {/* Quick Bid Increment Buttons */}
-              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.62rem', color: 'var(--muted)', marginRight: '2px' }}>QUICK:</span>
-                {[1, 2, 5, 10, 20].map(inc => (
-                  <button
-                    key={inc}
-                    type="button"
-                    onClick={() => {
-                      const cur = parseInt(bidAmount, 10) || parseInt(currentPlayer?.BasePrice, 10) || 0
-                      setBidAmount(String(cur + inc))
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: '3px 0',
-                      background: 'var(--bg3)',
-                      border: '1px solid var(--border)',
-                      borderRadius: '5px',
-                      color: 'var(--text)',
-                      fontSize: '0.68rem',
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    +{inc}L
-                  </button>
-                ))}
               </div>
 
               {/* Bid Alert message */}
@@ -1182,7 +1147,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
           minHeight: 0
         }}>
           {teams.map(team => {
-            const pct = Math.round((team.budget / (config?.basePurse || 100)) * 100)
+            const pct = Math.round((team.budget / basePurse) * 100)
             const barColor = pct > 50 ? 'var(--green)' : pct > 20 ? 'var(--gold)' : 'var(--red)'
             const isSelected = selectedTeam === team.id
             const rosterList = team.roster || []
