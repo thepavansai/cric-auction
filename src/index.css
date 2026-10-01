@@ -164,3 +164,86 @@ input[type="number"].themed-control::-webkit-outer-spin-button,
 input[type="number"].themed-control::-webkit-inner-spin-button {
   margin: 0;
 }
+
+@media (max-width: 900px) {
+  .app-header {
+    height: auto !important;
+    min-height: 56px;
+    padding: 8px 12px !important;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .setup-view-root {
+    padding: 2rem 1rem !important;
+  }
+
+  .setup-branding-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .export-view-root {
+    padding: 2rem 1rem !important;
+  }
+
+  .export-summary-grid {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)) !important;
+  }
+
+  .export-actions {
+    flex-direction: column;
+  }
+
+  .export-actions > button {
+    width: 100%;
+  }
+
+  .auction-root {
+    height: auto !important;
+    min-height: calc(100vh - 56px);
+    overflow: visible !important;
+  }
+
+  .auction-top-zone {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    overflow: visible !important;
+  }
+
+  .auction-bottom-zone {
+    min-height: 420px;
+    overflow: visible !important;
+  }
+
+  .auction-team-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)) !important;
+    grid-template-rows: none !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .app-header > div:first-child {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .app-header > div:last-child {
+    width: 100%;
+    justify-content: center !important;
+    flex-wrap: wrap;
+    gap: 4px !important;
+  }
+
+  .app-header > div:last-child > div:first-child {
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 3px !important;
+  }
+
+  .auction-top-zone > div:first-child > div:last-child > div:last-child {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}

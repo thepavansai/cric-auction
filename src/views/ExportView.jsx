@@ -84,7 +84,7 @@ export default function ExportView({ masterRoster, config, onRestart, onReauctio
   }
 
   return (
-    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '3rem 2rem' }} className="slide-in">
+    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '3rem 2rem' }} className="slide-in export-view-root">
       <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
         <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>🏆</div>
         <h1 style={{
@@ -106,7 +106,7 @@ export default function ExportView({ masterRoster, config, onRestart, onReauctio
         gridTemplateColumns: 'repeat(3, 1fr)',
         gap: '12px',
         marginBottom: '2rem'
-      }}>
+      }} className="export-summary-grid">
         <SummaryCard icon={<Trophy size={20} />} label="Players Sold" value={soldPlayers.length} color="var(--gold)" />
         <SummaryCard icon={<Users size={20} />} label="Total Teams" value={allTeams.length} color="var(--green)" />
         <SummaryCard icon={<FileSpreadsheet size={20} />} label="Total Bid Value" value={formatInLakhs(soldPlayers.reduce((s, p) => s + p.WinningBid, 0))} color="var(--text)" />
@@ -225,7 +225,7 @@ export default function ExportView({ masterRoster, config, onRestart, onReauctio
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '12px' }}>
+      <div className="export-actions" style={{ display: 'flex', gap: '12px' }}>
         <button
           onClick={handleExport}
           style={{

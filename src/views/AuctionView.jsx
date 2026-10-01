@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import axios from 'axios'
+import { isPlayerRoster, safeSetItem as writeStorage } from '../storage.js'
 import {
   SkipForward, Gavel, Users,
   TrendingDown, CheckCircle, AlertCircle, RefreshCw, RotateCcw
@@ -89,15 +90,18 @@ const getSkillStyle = (skillLevel, isCaptain = false) => {
 
 export default function AuctionView({ masterRoster, config, onDone, isReauction }) {
   const savedDraft = readDraft()
-  const savedBidSnapshots = isReauction ? [] : readBidSnapshots()
+  const savedBidSnapshots = readBidSnapshots()
   const hasValidDraftRoster = Array.isArray(savedDraft?.roster)
   const canRestoreDraft = (() => {
-    if (isReauction || !hasValidDraftRoster) return false
+    if (!hasValidDraftRoster || savedDraft?.isReauction !== Boolean(isReauction)) return false
 
     const draftRoster = savedDraft.roster
-    if (draftRoster.length !== masterRoster.length) return false
+    const expectedRoster = isReauction
+      ? masterRoster.filter(player => player.Status === 'Unsold')
+      : masterRoster
+    if (!isPlayerRoster(draftRoster) || draftRoster.length !== expectedRoster.length) return false
 
-    const masterIds = new Set(masterRoster.map(player => player.ID))
+    const masterIds = new Set(expectedRoster.map(player => player.ID))
     const draftIds = new Set(draftRoster.map(player => player.ID))
     if (masterIds.size !== draftIds.size) return false
     for (const id of masterIds) {
@@ -141,6 +145,9 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
   const [phaseNotice, setPhaseNotice] = useState({ visible: false, message: '' })
   const [showCaptainTransitionConfirm, setShowCaptainTransitionConfirm] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState('ok')
+  const [pendingMutationPresent, setPendingMutationPresent] = useState(() =>
+    Boolean(localStorage.getItem('cricket-auction-pending-mutation'))
+  )
   const failCountRef = useRef(0)
   const warningTimerRef = useRef(null)
   const phaseNoticeTimerRef = useRef(null)
@@ -149,6 +156,9 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
   const preserveBidAmountOnNextPlayerChangeRef = useRef(false)
   const advancePlayerRef = useRef(null)
   const selectedTeamRef = useRef(selectedTeam)
+  const bidRequestRef = useRef(null)
+  const reverseRequestRef = useRef(null)
+  const pendingRecoveryStartedRef = useRef(false)
 
   const clearAdvanceTimer = () => {
     if (advanceTimerRef.current) {
@@ -197,23 +207,11 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
   }
 
   const safeSetItem = (key, value) => {
-    try {
-      localStorage.setItem(key, value)
-    } catch (e) {
-      if (e?.name === 'QuotaExceededError') {
-        localStorage.removeItem('cricket-auction-bid-snapshots')
-        setBidSnapshots([])
-        try {
-          localStorage.setItem(key, value)
-          showToast('Storage full — bid history cleared.', { persistent: false })
-        } catch {
-          showToast(
-            'Storage full — bid history cleared. Auction state is safe.',
-            { persistent: true }
-          )
-        }
-      }
+    if (!writeStorage(key, value)) {
+      showToast('Browser storage is full; the latest changes may not survive a reload.', { persistent: true })
+      return false
     }
+    return true
   }
 
   const persistAuctionState = (nextState) => {
@@ -223,6 +221,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
       selectedTeam: nextState.selectedTeam,
       bidAmount: nextState.bidAmount,
       auctionPhase: nextState.auctionPhase,
+      isReauction,
       savedAt: Date.now()
     }))
   }
@@ -237,10 +236,10 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
       savedAt: Date.now()
     })
     safeSetItem(BIDS_KEY, JSON.stringify(bidSnapshots.slice(0, 20)))
-  }, [roster, currentPlayerID, selectedTeam, bidAmount, auctionPhase, bidSnapshots])
+  }, [roster, currentPlayerID, selectedTeam, bidAmount, auctionPhase, bidSnapshots, isReauction])
 
   useEffect(() => {
-    if (!isReauction && !canRestoreDraft) {
+    if (!canRestoreDraft) {
       localStorage.removeItem(AUCTION_DRAFT_KEY)
       localStorage.removeItem(BIDS_KEY)
     }
@@ -315,11 +314,13 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
     try {
       const res = await axios.get(`${API}/api/teams`)
       failCountRef.current = 0
-      setConnectionStatus('ok')
-      setTeams(res.data)
-      if (!selectedTeamRef.current && res.data.length > 0) {
-        setSelectedTeam(res.data[0].id)
+      const responseTeams = Array.isArray(res.data) ? res.data : []
+      setConnectionStatus(responseTeams.length > 0 ? 'ok' : 'unconfigured')
+      setTeams(responseTeams)
+      if (!selectedTeamRef.current && responseTeams.length > 0) {
+        setSelectedTeam(responseTeams[0].id)
       }
+      return responseTeams
     } catch {
       failCountRef.current += 1
       if (failCountRef.current >= 3) {
@@ -380,6 +381,96 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
     setBidSnapshots(currentSnapshots => [snapshot, ...currentSnapshots].slice(0, 20))
   }
 
+  useEffect(() => {
+    if (pendingRecoveryStartedRef.current) return
+    pendingRecoveryStartedRef.current = true
+
+    let pending
+    try {
+      pending = JSON.parse(localStorage.getItem('cricket-auction-pending-mutation') || 'null')
+    } catch {
+      localStorage.removeItem('cricket-auction-pending-mutation')
+      setPendingMutationPresent(false)
+      return
+    }
+    if (!pending?.request_id && !pending?.request?.request_id) return
+
+    const recover = async () => {
+      setBidStatus('loading')
+      try {
+        if (pending.type === 'reverse') {
+          await axios.post(`${API}/api/reverse-bid`, {
+            request_id: pending.request_id,
+            expected_player_id: pending.expected_player_id
+          })
+          localStorage.removeItem('cricket-auction-pending-mutation')
+          setPendingMutationPresent(false)
+          const previous = pending.snapshot
+          const restoredRoster = previous.previousRoster || roster.map(player =>
+            player.ID === previous.changedPlayerID
+              ? { ...player, ...previous.previousPlayerState }
+              : player
+          )
+          setRoster(restoredRoster)
+          setAuctionPhase(previous.auctionPhase || 'player')
+          setCurrentPlayerID(previous.currentPlayerID || null)
+          setSelectedTeam(previous.selectedTeam || '')
+          setBidAmount(previous.bidAmount || '')
+          setBidSnapshots(current => current.slice(1))
+          setBidStatus(null)
+          await fetchTeams()
+          return
+        }
+
+        if (pending.type !== 'bid' || !pending.request || !pending.snapshot) {
+          localStorage.removeItem('cricket-auction-pending-mutation')
+          setPendingMutationPresent(false)
+          setBidStatus(null)
+          return
+        }
+
+        await axios.post(`${API}/api/bid`, pending.request)
+        const recoveredTeams = await fetchTeams()
+        if (!recoveredTeams) throw new Error('Could not refresh team state after recovering the bid')
+        localStorage.removeItem('cricket-auction-pending-mutation')
+        setPendingMutationPresent(false)
+        const playerId = pending.request.player_id
+        const teamName = recoveredTeams?.find(team => team.id === pending.request.team_id)?.name || ''
+        const updatedRoster = roster.map(player => player.ID === playerId
+          ? {
+              ...player,
+              Status: 'Sold',
+              WinningTeam: teamName,
+              WinningBid: pending.request.bid_amount,
+              Round: isReauction ? 2 : 1
+            }
+          : player
+        )
+        setRoster(updatedRoster)
+        setCurrentPlayerID(playerId)
+        setSelectedTeam(pending.request.team_id)
+        setBidSnapshots(current => current.some(item => item.changedPlayerID === playerId)
+          ? current
+          : [pending.snapshot, ...current].slice(0, 20)
+        )
+        setBidStatus('success')
+        setBidMsg('Recovered a bid that completed before the previous connection ended.')
+        scheduleAdvance(updatedRoster, playerId, 1200)
+      } catch (error) {
+        if (pending.type === 'bid') {
+          bidRequestRef.current = {
+            shape: `${pending.request.team_id}|${pending.request.player_id}|${pending.request.bid_amount}|${pending.request.ignore_budget}`,
+            requestId: pending.request.request_id
+          }
+        }
+        setBidStatus('error')
+        setBidMsg(error.response?.data?.detail || 'Could not reconcile the pending auction action. Retry it or refresh team data.')
+      }
+    }
+
+    recover()
+  }, [fetchTeams])
+
   const resolveCaptainTransitionChoice = (moveToPlayerAuction) => {
     const pending = captainTransitionPendingRef.current
     captainTransitionPendingRef.current = null
@@ -410,9 +501,29 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
       clearAdvanceTimer()
       setShowCaptainTransitionConfirm(false)
       captainTransitionPendingRef.current = null
-      await axios.post(`${API}/api/reverse-bid`)
+      const requestId = previous.reverseRequestId || reverseRequestRef.current || crypto.randomUUID()
+      reverseRequestRef.current = requestId
+      const nextSnapshots = [{ ...previous, reverseRequestId: requestId }, ...bidSnapshots.slice(1)]
+      if (!writeStorage(BIDS_KEY, JSON.stringify(nextSnapshots))) {
+        throw new Error('Could not save reverse recovery data')
+      }
+      if (!writeStorage('cricket-auction-pending-mutation', JSON.stringify({
+        type: 'reverse',
+        request_id: requestId,
+        expected_player_id: previous.changedPlayerID,
+        snapshot: previous
+      }))) {
+        throw new Error('Could not save pending reversal recovery data')
+      }
+      setPendingMutationPresent(true)
+      await axios.post(`${API}/api/reverse-bid`, {
+        request_id: requestId,
+        expected_player_id: previous.changedPlayerID
+      })
+      localStorage.removeItem('cricket-auction-pending-mutation')
+      setPendingMutationPresent(false)
 
-      const restoredRoster = roster.map(player =>
+      const restoredRoster = previous.previousRoster || roster.map(player =>
         player.ID === previous.changedPlayerID
           ? {
               ...player,
@@ -438,11 +549,17 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
       setSelectedTeam(previous.selectedTeam)
       setBidAmount(previous.bidAmount)
       setBidSnapshots(currentSnapshots => currentSnapshots.slice(1))
+      reverseRequestRef.current = null
 
       setBidStatus('success')
       setBidMsg(`Reversed bid for ${previous.playerName}`)
       await fetchTeams()
     } catch (err) {
+      if (err.response && err.response.status < 500) {
+        localStorage.removeItem('cricket-auction-pending-mutation')
+        setPendingMutationPresent(false)
+        reverseRequestRef.current = null
+      }
       setBidStatus('error')
       const msg = err.response?.data?.detail
         || (typeof err.response?.data === 'string' ? err.response.data : null)
@@ -454,10 +571,8 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
 
   const getPhotoUrl = (player) => {
     if (!player?.ImagePath) return ''
-    const filename = decodeURIComponent(
-      player.ImagePath.replace(/\\/g, '/').split('/').pop()
-    )
-    return filename ? `${API}/images/${filename}` : ''
+    const filename = player.ImagePath.replace(/\\/g, '/').split('/').pop()
+    return filename ? `${API}/images/${encodeURIComponent(filename)}` : ''
   }
 
   const teamsWithoutCaptain = teams.filter(team => !roster.some(player =>
@@ -481,6 +596,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
     )
 
   const handleSell = async (options = {}) => {
+    if (bidStatus === 'loading' || bidStatus === 'success' || bidStatus === 'skip') return
     const forceSell = Boolean(options.forceSell)
 
     if (!selectedTeam) { setBidMsg('Select a team'); setBidStatus('error'); return }
@@ -532,6 +648,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
       const teamName = team.name
       const previousState = {
         changedPlayerID: currentPlayer.ID,
+        previousRoster: roster,
         previousPlayerState: {
           Status: currentPlayer.Status,
           WinningTeam: currentPlayer.WinningTeam,
@@ -545,12 +662,37 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
         auctionPhase: auctionPhase,
         playerName: currentPlayer.Name || 'Unknown Player'
       }
+      const requestShape = `${selectedTeam}|${currentPlayer.ID}|${amount}|${forceSell}`
+      if (bidRequestRef.current?.shape !== requestShape) {
+        bidRequestRef.current = { shape: requestShape, requestId: crypto.randomUUID() }
+      }
+      const requestId = bidRequestRef.current.requestId
+      const pendingMutation = {
+        type: 'bid',
+        requestId,
+        request: {
+          team_id: selectedTeam,
+          player_id: currentPlayer.ID,
+          bid_amount: amount,
+          ignore_budget: forceSell,
+          request_id: requestId
+        },
+        snapshot: previousState
+      }
+      if (!writeStorage('cricket-auction-pending-mutation', JSON.stringify(pendingMutation))) {
+        throw new Error('Could not save pending bid recovery data')
+      }
+      setPendingMutationPresent(true)
       await axios.post(`${API}/api/bid`, {
         team_id: selectedTeam,
         player_id: currentPlayer.ID,
         bid_amount: amount,
-        ignore_budget: forceSell
+        ignore_budget: forceSell,
+        request_id: requestId
       })
+      localStorage.removeItem('cricket-auction-pending-mutation')
+      setPendingMutationPresent(false)
+      bidRequestRef.current = null
 
       pushBidSnapshot(previousState)
 
@@ -582,6 +724,11 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
 
       scheduleAdvance(updatedRoster, currentPlayer.ID, 1200)
     } catch (err) {
+      if (err.response && err.response.status < 500) {
+        localStorage.removeItem('cricket-auction-pending-mutation')
+        setPendingMutationPresent(false)
+        bidRequestRef.current = null
+      }
       setBidStatus('error')
       const msg = err.response?.data?.detail
         || (typeof err.response?.data === 'string' ? err.response.data : null)
@@ -744,14 +891,14 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
     .toUpperCase()
 
   return (
-    <div style={{
+    <div className="auction-root" style={{
       display: 'flex',
       flexDirection: 'column',
       height: 'calc(100vh - 56px)',
       overflow: 'hidden'
     }}>
       {/* ── TOP ZONE: Player Showcase Card (58%) + Bidding Console (42%) ── */}
-      <div style={{
+      <div className="auction-top-zone" style={{
         height: '35%',
         minHeight: '230px',
         maxHeight: '360px',
@@ -932,15 +1079,16 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
               display: 'flex', alignItems: 'center', gap: '5px',
               fontSize: '0.68rem',
               color: connectionStatus === 'ok' ? 'var(--green)' :
-                     connectionStatus === 'retrying' ? 'var(--gold)' : 'var(--red)'
+                connectionStatus === 'retrying' || connectionStatus === 'unconfigured' ? 'var(--gold)' : 'var(--red)'
             }}>
               <span style={{
                 width: '6px', height: '6px', borderRadius: '50%', display: 'inline-block',
                 background: connectionStatus === 'ok' ? 'var(--green)' :
-                             connectionStatus === 'retrying' ? 'var(--gold)' : 'var(--red)'
+                             connectionStatus === 'retrying' || connectionStatus === 'unconfigured' ? 'var(--gold)' : 'var(--red)'
               }} />
               {connectionStatus === 'ok' ? 'Connected' :
-               connectionStatus === 'retrying' ? 'Reconnecting...' : 'Lost'}
+               connectionStatus === 'retrying' ? 'Reconnecting...' :
+               connectionStatus === 'unconfigured' ? 'No auction configured' : 'Lost'}
             </div>
           </div>
 
@@ -1020,7 +1168,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', justifyContent: 'center' }}>
               <button
                 onClick={() => handleSell()}
-                disabled={isActionLocked}
+                disabled={isActionLocked || connectionStatus !== 'ok' || teams.length === 0}
                 style={{
                   ...btnStyle('var(--green)', '#000'),
                   width: '100%',
@@ -1052,7 +1200,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
                 {isReauction && (
                   <button
                     onClick={() => handleSell({ forceSell: true })}
-                    disabled={isActionLocked}
+                    disabled={isActionLocked || connectionStatus !== 'ok' || teams.length === 0}
                     style={{
                       ...btnStyle('var(--gold)', '#111'),
                       flex: 1.1,
@@ -1090,7 +1238,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
       </div>
 
       {/* ── BOTTOM ZONE: 10 Teams Standings (5×2 Grid) ── */}
-      <div style={{
+      <div className="auction-bottom-zone" style={{
         flex: 1,
         minHeight: 0,
         display: 'flex',
@@ -1104,7 +1252,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Users size={14} style={{ color: 'var(--muted)' }} />
             <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em' }}>
-              TEAM STANDINGS (10 TEAMS)
+              TEAM STANDINGS ({teams.length} TEAMS)
             </span>
           </div>
 
@@ -1124,6 +1272,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
             </button>
             <button
               onClick={() => onDone(roster)}
+              disabled={isActionLocked || pendingMutationPresent}
               style={{
                 background: 'none', border: '1px solid var(--border)',
                 color: 'var(--muted)', cursor: 'pointer',
@@ -1138,7 +1287,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
         </div>
 
         {/* 5-column × 2-row team grid — Fills 100% of remaining height */}
-        <div style={{
+        <div className="auction-team-grid" style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
           gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
@@ -1148,6 +1297,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
         }}>
           {teams.map(team => {
             const pct = Math.round((team.budget / basePurse) * 100)
+            const barWidth = Math.max(0, Math.min(100, pct))
             const barColor = pct > 50 ? 'var(--green)' : pct > 20 ? 'var(--gold)' : 'var(--red)'
             const isSelected = selectedTeam === team.id
             const rosterList = team.roster || []
@@ -1198,7 +1348,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
                 {/* Progress bar */}
                 <div style={{ height: '3px', background: 'var(--bg)', borderRadius: '2px', overflow: 'hidden', marginTop: '4px', marginBottom: '6px' }}>
                   <div style={{
-                    height: '100%', width: `${pct}%`,
+                    height: '100%', width: `${barWidth}%`,
                     background: barColor, borderRadius: '2px',
                     transition: 'width 0.4s ease'
                   }} />

@@ -25,6 +25,21 @@ class ErrorBoundary extends React.Component {
             <pre style={{ whiteSpace: 'pre-wrap', margin: 0, padding: '1rem', borderRadius: '12px', background: 'var(--bg2)', border: '1px solid var(--border)', overflowX: 'auto', fontSize: '0.8rem' }}>
               {String(this.state.error?.stack || this.state.error || 'Unknown error')}
             </pre>
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  Object.keys(localStorage)
+                    .filter(key => key.startsWith('cricket-auction-'))
+                    .forEach(key => localStorage.removeItem(key))
+                } finally {
+                  window.location.reload()
+                }
+              }}
+              style={{ marginTop: '1rem', padding: '10px 14px', background: 'var(--red)', color: '#fff', border: 0, borderRadius: '6px', cursor: 'pointer' }}
+            >
+              Clear saved data and restart
+            </button>
           </div>
         </div>
       )

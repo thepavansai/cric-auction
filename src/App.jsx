@@ -4,6 +4,7 @@ import AuctionView from './views/AuctionView.jsx'
 import ExportView from './views/ExportView.jsx'
 import { Moon, Sun, Trash2 } from 'lucide-react'
 import defaultLogo from './assets/default-logo.png'
+import { isPlayerRoster, safeSetItem as writeStorage } from './storage.js'
 
 const SESSION_KEY = 'cricket-auction-session'
 const BRANDING_KEY = 'cricket-auction-branding'
@@ -13,6 +14,7 @@ const APP_KEYS = [
   'cricket-auction-auction-draft',
   'cricket-auction-auction-history',
   'cricket-auction-bid-snapshots',
+  'cricket-auction-pending-mutation',
   BRANDING_KEY
 ]
 
@@ -24,10 +26,17 @@ const safeParse = (value, fallback) => {
   }
 }
 
-const loadSession = () => safeParse(localStorage.getItem(SESSION_KEY), null)
+const loadSession = () => {
+  const session = safeParse(localStorage.getItem(SESSION_KEY), null)
+  if (!session || !['setup', 'auction', 'export'].includes(session.view)) return null
+  if (!isPlayerRoster(session.masterRoster)) return null
+  if (session.view !== 'setup' && (!session.config || !Array.isArray(session.config.teams))) return null
+  return session
+}
 
 export default function App() {
   const savedSession = loadSession()
+  const hasSavedSession = localStorage.getItem(SESSION_KEY) !== null
   const [view, setView] = useState(savedSession?.view || 'setup')
   const [masterRoster, setMasterRoster] = useState(savedSession?.masterRoster || [])
   const [config, setConfig] = useState(savedSession?.config || null)
@@ -38,7 +47,7 @@ export default function App() {
   const [toast, setToast] = useState({ visible: false, message: '' })
   const [refreshStep, setRefreshStep] = useState(0)
   const [clearConfirm, setClearConfirm] = useState(false)
-  const [isReauction, setIsReauction] = useState(false)
+  const [isReauction, setIsReauction] = useState(savedSession?.isReauction === true)
   const lastSessionRef = useRef(null)
   const toastTimerRef = useRef(null)
   const allowReloadRef = useRef(false)
@@ -59,20 +68,8 @@ export default function App() {
   }
 
   const safeSetItem = (key, value) => {
-    try {
-      localStorage.setItem(key, value)
-    } catch (e) {
-      if (e?.name === 'QuotaExceededError') {
-        localStorage.removeItem('cricket-auction-bid-snapshots')
-        try {
-          localStorage.setItem(key, value)
-        } catch {
-          showToast(
-            'Storage full — bid history cleared. Auction state is safe.',
-            { persistent: true }
-          )
-        }
-      }
+    if (!writeStorage(key, value)) {
+      showToast('Browser storage is full; the latest changes may not survive a reload.', { persistent: true })
     }
   }
 
@@ -93,11 +90,18 @@ export default function App() {
   }, [theme])
 
   useEffect(() => {
-    const nextSession = { view, masterRoster, config, theme }
+    const nextSession = { view, masterRoster, config, theme, isReauction }
 
     lastSessionRef.current = nextSession
     safeSetItem(SESSION_KEY, JSON.stringify(nextSession))
-  }, [view, masterRoster, config, theme])
+  }, [view, masterRoster, config, theme, isReauction])
+
+  useEffect(() => {
+    if (hasSavedSession && !savedSession) {
+      localStorage.removeItem(SESSION_KEY)
+      showToast('Saved session was invalid. Start again from Setup.', { persistent: true })
+    }
+  }, [])
 
   useEffect(() => {
     const handleBeforeUnload = (event) => {
@@ -175,6 +179,7 @@ export default function App() {
     setView('setup')
     setMasterRoster([])
     setConfig(null)
+    setIsReauction(false)
     setBranding({ orgName: '', logoDataUrl: '' })
     setTheme('light')
     setClearConfirm(false)
@@ -199,17 +204,21 @@ export default function App() {
     setView('setup')
     setMasterRoster([])
     setConfig(null)
+    setIsReauction(false)
     localStorage.removeItem(SESSION_KEY)
     localStorage.removeItem('cricket-auction-setup-draft')
     localStorage.removeItem('cricket-auction-auction-draft')
     localStorage.removeItem('cricket-auction-auction-history')
+    localStorage.removeItem('cricket-auction-pending-mutation')
   }
 
   const handleSetupComplete = (roster, cfg) => {
     localStorage.removeItem('cricket-auction-auction-draft')
     localStorage.removeItem('cricket-auction-bid-snapshots')
+    localStorage.removeItem('cricket-auction-pending-mutation')
     setMasterRoster(roster)
     setConfig(cfg)
+    setIsReauction(false)
     setView('auction')
   }
 
@@ -244,7 +253,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--grad-bg)' }}>
-      <header style={{
+      <header className="app-header" style={{
         background: 'var(--bg2)',
         borderBottom: '1px solid var(--border)',
         padding: '0 2rem',

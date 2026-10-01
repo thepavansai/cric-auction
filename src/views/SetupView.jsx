@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import axios from 'axios'
+import { safeSetItem } from '../storage.js'
 import {
   Upload, FolderOpen, Users, DollarSign,
   CheckCircle, AlertCircle, Image as ImageIcon, X, Sparkles, Hash
@@ -34,7 +35,10 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
   const setupDraftKey = 'cricket-auction-setup-draft'
   const savedSetupDraft = (() => {
     try {
-      return JSON.parse(localStorage.getItem(setupDraftKey) || 'null')
+      const draft = JSON.parse(localStorage.getItem(setupDraftKey) || 'null')
+      return Array.isArray(draft?.parsedRoster) && draft.parsedRoster.every(player =>
+        player && typeof player === 'object' && typeof player.ID === 'string'
+      ) ? draft : null
     } catch {
       return null
     }
@@ -98,7 +102,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
   }
 
   useEffect(() => {
-    localStorage.setItem(setupDraftKey, JSON.stringify({
+    const saved = safeSetItem(setupDraftKey, JSON.stringify({
       imagePath,
       teamsInput,
       basePurse,
@@ -110,6 +114,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
       idColumn,
       detectedHeaders
     }))
+    if (!saved) setErrorMsg('Browser storage is full. Setup changes may not survive a reload.')
   }, [imagePath, teamsInput, basePurse, rosterFile, parsedCount, parsedRoster, captainPlayerIdsInput, captainNamesInput, idColumn, detectedHeaders])
 
   const normalizeHeader = (value) =>
@@ -210,6 +215,11 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
     ])
 
     const cleanData = dataRows
+      .filter(row => {
+        const rawId = playerIdIndex >= 0 ? String(row[playerIdIndex] ?? '').trim() : ''
+        const name = nameIndex >= 0 ? String(row[nameIndex] ?? '').trim() : ''
+        return rawId !== '' || name !== ''
+      })
       .map((row, index) => {
         const rawId = playerIdIndex >= 0 ? String(row[playerIdIndex] ?? '').trim() : ''
         const name = nameIndex >= 0 ? String(row[nameIndex] ?? '').trim() : ''
@@ -231,7 +241,16 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
           WinningBid: 0
         }
       })
-      .filter(p => p.Name !== '' || p.ID !== '')
+
+    const usedIds = new Set(cleanData.filter(player => player.ID).map(player => player.ID))
+    for (const player of cleanData) {
+      if (!player.ID) {
+        let fallbackId = `P${usedIds.size + 1}`
+        while (usedIds.has(fallbackId)) fallbackId = `P${Number(fallbackId.slice(1)) + 1}`
+        player.ID = fallbackId
+        usedIds.add(fallbackId)
+      }
+    }
 
     const matchedHeader = playerIdIndex >= 0 ? headerRow[playerIdIndex] : ''
     return { cleanData, matchedHeader }
@@ -298,10 +317,37 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
       return
     }
 
+    const rosterIds = new Set(parsedRoster.map(player => normalizeText(player.ID)))
+    const rosterNames = new Set(parsedRoster.map(player => normalizeText(player.Name)))
+    const unmatchedCaptains = [
+      ...captainPlayerIds.filter(value => !rosterIds.has(normalizeText(value))),
+      ...captainNames.filter(value => !rosterNames.has(normalizeText(value)))
+    ]
+    if (unmatchedCaptains.length > 0) {
+      setErrorMsg(`These captain IDs or names were not found: ${unmatchedCaptains.join(', ')}`)
+      return
+    }
+
     setErrorMsg('')
     setStatus('loading')
 
     const teamNames = teamsInput.split(',').map(t => t.trim()).filter(Boolean)
+    if (teamNames.length === 0) {
+      setErrorMsg('Enter at least one team name.')
+      setStatus(null)
+      return
+    }
+    if (new Set(teamNames.map(name => name.toLocaleLowerCase())).size !== teamNames.length) {
+      setErrorMsg('Team names must be unique.')
+      setStatus(null)
+      return
+    }
+    const playerIds = parsedRoster.map(player => player.ID)
+    if (new Set(playerIds).size !== playerIds.length) {
+      setErrorMsg('Player IDs must be unique.')
+      setStatus(null)
+      return
+    }
     const captainPlayerIdSet = new Set(captainPlayerIds.map(normalizeText))
     const captainNameSet = new Set(captainNames.map(normalizeText))
     
@@ -319,6 +365,11 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
         BasePrice: isCaptain ? CAPTAIN_BASE_PRICE : player.BasePrice
       }
     })
+    if (!rosterWithCaptains.some(player => player.IsCaptain)) {
+      setErrorMsg('No captain IDs or names matched the roster.')
+      setStatus(null)
+      return
+    }
 
     try {
       await axios.post(`${API}/api/set-config`, {
@@ -358,7 +409,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
   )
 
   return (
-    <div style={{ maxWidth: '680px', margin: '0 auto', padding: '3rem 2rem' }} className="slide-in">
+    <div style={{ maxWidth: '680px', margin: '0 auto', padding: '3rem 2rem' }} className="slide-in setup-view-root">
       <div style={{ marginBottom: '2.5rem' }}>
         <h1 style={{ fontSize: '3rem', color: 'var(--green)', margin: 0, lineHeight: 1 }}>
           AUCTION SETUP
@@ -397,7 +448,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
             )}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <div className="setup-branding-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             {/* Org Name */}
             <div>
               <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: '6px' }}>
