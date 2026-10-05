@@ -572,7 +572,14 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
   const getPhotoUrl = (player) => {
     if (!player?.ImagePath) return ''
     const filename = player.ImagePath.replace(/\\/g, '/').split('/').pop()
-    return filename ? `${API}/images/${encodeURIComponent(filename)}` : ''
+     if (!filename) return ''
+    let decodedFilename = filename
+    try {
+      decodedFilename = decodeURIComponent(filename)
+    } catch {
+      // Keep malformed percent sequences as literal filename characters.
+    }
+    return `${API}/images/${encodeURIComponent(decodedFilename)}`
   }
 
   const teamsWithoutCaptain = teams.filter(team => !roster.some(player =>
