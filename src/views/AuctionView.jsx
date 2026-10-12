@@ -3,7 +3,8 @@ import axios from 'axios'
 import { isPlayerRoster, safeSetItem as writeStorage } from '../storage.js'
 import {
   SkipForward, Gavel, Users,
-  TrendingDown, CheckCircle, AlertCircle, RefreshCw, RotateCcw
+  TrendingDown, CheckCircle, AlertCircle, RefreshCw, RotateCcw,
+  Award
 } from 'lucide-react'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8080'
@@ -17,6 +18,15 @@ const formatInLakhs = (amount) => {
     return `${Number.isInteger(crValue) ? crValue : crValue.toFixed(2)} Cr`
   }
   return `${value.toLocaleString('en-IN')} L`
+}
+
+const getRoleEmoji = (role = '') => {
+  const r = String(role).toLowerCase()
+  if (r.includes('keeper')) return '🧤'
+  if (r.includes('all')) return '⚡'
+  if (r.includes('bowl')) return '🎯'
+  if (r.includes('bat')) return '🏏'
+  return '🏏'
 }
 
 const readDraft = () => {
@@ -644,6 +654,20 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
       return
     }
 
+    const teamExpertCount = (team.roster || []).reduce((count, playerID) => {
+      const player = roster.find(rosterPlayer => rosterPlayer.ID === playerID)
+      return count + (player && !player.IsCaptain && normalizeSkillLevel(player.SkillLevel) === 'expert' ? 1 : 0)
+    }, 0)
+    const maxExpertsPerTeam = Number.isInteger(config?.max_experts_per_team)
+      ? config.max_experts_per_team
+      : 3
+    const isExpertPlayer = !currentPlayer.IsCaptain && normalizeSkillLevel(currentPlayer.SkillLevel) === 'expert'
+    if (!forceSell && isExpertPlayer && teamExpertCount >= maxExpertsPerTeam) {
+      setBidMsg(`${team.name} has reached its limit of ${maxExpertsPerTeam} experts`)
+      setBidStatus('error')
+      return
+    }
+
     if (!forceSell && amount > team.budget) {
       setBidMsg(`${team.name} only has ${formatInLakhs(team.budget)} left`)
       setBidStatus('error')
@@ -855,6 +879,16 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
   const progress = phaseRoster.length > 0 ? Math.round((soldCount / phaseRoster.length) * 100) : 100
   const isActionLocked = bidStatus === 'loading' || bidStatus === 'success' || bidStatus === 'skip'
   const basePurse = Number(config?.base_purse) || 100
+  const maxExpertsPerTeam = Number.isInteger(config?.max_experts_per_team)
+    ? config.max_experts_per_team
+    : 3
+  // Balance the standings grid for any team count (6 -> 3x2, 8 -> 4x2, 10 -> 5x2)
+  const teamGridCols = teams.length <= 3 ? Math.max(teams.length, 1) : Math.ceil(teams.length / 2)
+
+  const bumpBid = (delta) => {
+    const current = parseFloat(bidAmount) || 0
+    setBidAmount(String(Math.max(0, Math.round((current + delta) * 10) / 10)))
+  }
 
   advancePlayerRef.current = advancePlayer
 
@@ -1032,7 +1066,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
               <div style={{
                 fontFamily: 'Bebas Neue',
-                fontSize: 'clamp(2.2rem, 3vw, 2.8rem)',
+                fontSize: 'clamp(1.6rem, 2.2vw, 2.1rem)',
                 lineHeight: 1,
                 color: 'var(--text)',
                 letterSpacing: '0.02em',
@@ -1048,15 +1082,50 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
                 {currentPlayer.ID} · {currentPlayer.Email}
               </div>
 
-              {/* 4 Stat Badges */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+              {/* Hero row: Category medallion + gold price tag */}
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'stretch', marginBottom: '6px' }}>
+                <div style={{
+                  flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px',
+                  background: 'var(--bg2)', border: '1px solid var(--border)',
+                  borderRadius: '10px', padding: '8px 12px'
+                }}>
+                  <span style={{ fontSize: '2.4rem', lineHeight: 1, flexShrink: 0 }}>
+                    {currentPlayer.IsCaptain ? '👑' : getRoleEmoji(currentPlayer.Role)}
+                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--muted)', letterSpacing: '0.08em', fontWeight: 600 }}>
+                      CATEGORY
+                    </div>
+                    <div style={{
+                      fontFamily: 'Bebas Neue', fontSize: '1.4rem', color: 'var(--text)',
+                      lineHeight: 1.05, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+                    }}>
+                      {currentPlayer.Role || 'PLAYER'}
+                    </div>
+                  </div>
+                </div>
+                <div style={{
+                  display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+                  background: 'rgba(255,214,0,0.12)', border: '1px solid rgba(255,214,0,0.4)',
+                  borderRadius: '10px', padding: '8px 16px', minWidth: '118px', flexShrink: 0
+                }}>
+                  <div style={{ fontSize: '0.6rem', color: 'var(--gold)', letterSpacing: '0.08em', fontWeight: 600 }}>
+                    💰 BASE PRICE
+                  </div>
+                  <div style={{ fontFamily: 'Bebas Neue', fontSize: '2rem', color: 'var(--gold)', lineHeight: 1 }}>
+                    {formatInLakhs(currentPlayer.BasePrice)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Secondary chips: Skill + Status */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px' }}>
                 <StatChip
+                  icon={<Award size={12} />}
                   label="SKILL LEVEL"
                   value={currentPlayer.IsCaptain ? 'Captain' : (currentPlayer.SkillLevel || 'N/A')}
                   skillStyle={getSkillStyle(currentPlayer.SkillLevel, currentPlayer.IsCaptain)}
                 />
-                <StatChip label="PLAYING ROLE" value={currentPlayer.Role || 'N/A'} />
-                <StatChip label="BASE PRICE" value={formatInLakhs(currentPlayer.BasePrice)} highlight />
                 <StatChip label="STATUS" value={currentPlayer.Status} />
               </div>
             </div>
@@ -1099,57 +1168,112 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
             </div>
           </div>
 
+          {/* Selected team banner */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '6px',
+            margin: '6px 0 2px', padding: '5px 10px',
+            background: 'rgba(0,200,83,0.1)', border: '1px solid rgba(0,200,83,0.3)',
+            borderRadius: '7px', fontSize: '0.78rem'
+          }}>
+            <span style={{ color: 'var(--muted)' }}>Selling to:</span>
+            <span style={{ color: 'var(--green)', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {teams.find(t => t.id === selectedTeam)?.name || 'No team selected'}
+            </span>
+            {teams.find(t => t.id === selectedTeam) && (
+              <span style={{ marginLeft: 'auto', color: 'var(--muted)', flexShrink: 0 }}>
+                {formatInLakhs(teams.find(t => t.id === selectedTeam).budget)} left
+              </span>
+            )}
+          </div>
+
           {/* Console Body: 2 Sub-Columns (Inputs on left, Big Actions on right) */}
           <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr', gap: '16px', alignItems: 'center', flex: 1, minHeight: 0 }}>
             {/* Left Sub-Col: Team & Bid Controls */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '8px' }}>
+              {/* WINNING TEAM dropdown hidden — team is picked by clicking a standings card.
+                  To restore: wrap this + BID AMOUNT in a grid (gridTemplateColumns: '1fr 1fr') and uncomment.
+              <div>
+                <label style={{ fontSize: '0.68rem', color: 'var(--muted)', display: 'block', marginBottom: '3px' }}>
+                  WINNING TEAM
+                </label>
+                <select
+                  className="themed-control"
+                  value={selectedTeam}
+                  onChange={e => setSelectedTeam(e.target.value)}
+                  style={{
+                    width: '100%', padding: '7px 8px',
+                    background: 'var(--bg2)', border: '1px solid var(--border)',
+                    borderRadius: '7px', color: 'var(--text)',
+                    fontSize: '0.85rem', fontFamily: 'DM Sans', outline: 'none'
+                  }}
+                >
+                  {teams.map(t => (
+                    <option key={t.id} value={t.id} disabled={auctionPhase === 'captain' && teamHasCaptain(t.name)}>
+                      {t.name} ({formatInLakhs(t.budget)}){auctionPhase === 'captain' && teamHasCaptain(t.name) ? ' ✓' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              */}
+              <div>
                 <div>
                   <label style={{ fontSize: '0.68rem', color: 'var(--muted)', display: 'block', marginBottom: '3px' }}>
-                    WINNING TEAM
+                    BID AMOUNT
                   </label>
-                  <select
-                    className="themed-control"
-                    value={selectedTeam}
-                    onChange={e => setSelectedTeam(e.target.value)}
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      className="themed-control"
+                      type="text"
+                      inputMode="decimal"
+                      value={bidAmount}
+                      onChange={e => {
+                        const next = e.target.value
+                        if (next === '' || /^\d*\.?\d?$/.test(next)) setBidAmount(next)
+                      }}
+                      placeholder={String(currentPlayer.BasePrice)}
+                      style={{
+                        width: '100%', padding: '6px 28px 6px 12px',
+                        background: 'var(--bg2)', border: '1px solid rgba(255,214,0,0.5)',
+                        borderRadius: '7px', color: 'var(--gold)',
+                        fontSize: '1.4rem', fontWeight: 700, fontFamily: 'Bebas Neue',
+                        letterSpacing: '0.04em', outline: 'none'
+                      }}
+                    />
+                    <span style={{
+                      position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)',
+                      color: 'var(--muted)', fontSize: '0.8rem', fontWeight: 600, pointerEvents: 'none'
+                    }}>L</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick bid adjusters */}
+              <div style={{ display: 'flex', gap: '5px' }}>
+                {[1, 5, 10].map(step => (
+                  <button
+                    key={step}
+                    type="button"
+                    onClick={() => bumpBid(step)}
                     style={{
-                      width: '100%', padding: '7px 8px',
-                      background: 'var(--bg2)', border: '1px solid var(--border)',
-                      borderRadius: '7px', color: 'var(--text)',
-                      fontSize: '0.85rem', fontFamily: 'DM Sans', outline: 'none'
+                      flex: 1, padding: '5px 0', borderRadius: '6px',
+                      background: 'var(--bg3)', border: '1px solid var(--border)',
+                      color: 'var(--text)', fontSize: '0.74rem', fontWeight: 600, cursor: 'pointer'
                     }}
                   >
-                    {teams.map(t => (
-                      <option key={t.id} value={t.id} disabled={auctionPhase === 'captain' && teamHasCaptain(t.name)}>
-                        {t.name} ({formatInLakhs(t.budget)}){auctionPhase === 'captain' && teamHasCaptain(t.name) ? ' ✓' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '0.68rem', color: 'var(--muted)', display: 'block', marginBottom: '3px' }}>
-                    BID AMOUNT (L)
-                  </label>
-                  <input
-                    className="themed-control"
-                    type="number"
-                    value={bidAmount}
-                    onChange={e => {
-                      const next = e.target.value
-                      if (next === '' || /^\d*\.?\d?$/.test(next)) setBidAmount(next)
-                    }}
-                    placeholder={`Min ${formatInLakhs(currentPlayer.BasePrice)}`}
-                    min={currentPlayer.BasePrice}
-                    step="0.1"
-                    style={{
-                      width: '100%', padding: '7px 8px',
-                      background: 'var(--bg2)', border: '1px solid var(--border)',
-                      borderRadius: '7px', color: 'var(--text)',
-                      fontSize: '0.85rem', fontFamily: 'DM Sans', outline: 'none'
-                    }}
-                  />
-                </div>
+                    +{step}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setBidAmount(String(currentPlayer.BasePrice))}
+                  style={{
+                    flex: 1, padding: '5px 0', borderRadius: '6px',
+                    background: 'var(--bg3)', border: '1px solid var(--border)',
+                    color: 'var(--muted)', fontSize: '0.74rem', fontWeight: 600, cursor: 'pointer'
+                  }}
+                >
+                  Base
+                </button>
               </div>
 
               {/* Bid Alert message */}
@@ -1185,7 +1309,9 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
                 }}
               >
                 <Gavel size={16} />
-                {bidStatus === 'loading' ? 'PROCESSING...' : 'SELL'}
+                {bidStatus === 'loading'
+                  ? 'PROCESSING...'
+                  : `SELL`}
               </button>
 
               <div style={{ display: 'flex', gap: '6px' }}>
@@ -1293,10 +1419,10 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
           </div>
         </div>
 
-        {/* 5-column × 2-row team grid — Fills 100% of remaining height */}
+        {/* Team grid — columns derived from team count so rows stay balanced */}
         <div className="auction-team-grid" style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+          gridTemplateColumns: `repeat(${teamGridCols}, minmax(0, 1fr))`,
           gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
           gap: '10px',
           flex: 1,
@@ -1308,6 +1434,10 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
             const barColor = pct > 50 ? 'var(--green)' : pct > 20 ? 'var(--gold)' : 'var(--red)'
             const isSelected = selectedTeam === team.id
             const rosterList = team.roster || []
+            const expertCount = rosterList.reduce((count, playerID) => {
+              const player = playerByID.get(playerID)
+              return count + (player && !player.IsCaptain && normalizeSkillLevel(player.SkillLevel) === 'expert' ? 1 : 0)
+            }, 0)
 
             return (
               <div
@@ -1329,7 +1459,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
                 {/* Team Name + Budget */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
                   <div style={{
-                    fontWeight: 700, fontSize: '0.88rem',
+                    fontWeight: 700, fontSize: '1.3rem',
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                     color: 'var(--text)', flex: 1, minWidth: 0
                   }}>
@@ -1349,6 +1479,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
                   color: 'var(--muted)', fontSize: '0.68rem', marginTop: '2px'
                 }}>
                   <span>{rosterList.length} player{rosterList.length === 1 ? '' : 's'}</span>
+                  <span>Experts {expertCount}/{maxExpertsPerTeam}</span>
                   <span>{pct}% purse</span>
                 </div>
 
@@ -1475,7 +1606,7 @@ export default function AuctionView({ masterRoster, config, onDone, isReauction 
   )
 }
 
-function StatChip({ label, value, highlight, skillStyle }) {
+function StatChip({ icon, label, value, highlight, skillStyle }) {
   return (
     <div style={{
       background: 'var(--bg2)',
@@ -1488,8 +1619,11 @@ function StatChip({ label, value, highlight, skillStyle }) {
       overflow: 'hidden'
     }}>
       <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
         fontSize: '0.58rem',
-        color: 'var(--muted)',
+        color: highlight ? 'var(--gold)' : (skillStyle?.textColor || 'var(--muted)'),
         marginBottom: '2px',
         letterSpacing: '0.06em',
         fontWeight: 600,
@@ -1497,7 +1631,8 @@ function StatChip({ label, value, highlight, skillStyle }) {
         overflow: 'hidden',
         textOverflow: 'ellipsis'
       }}>
-        {label}
+        {icon}
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
       </div>
       <div style={{
         fontWeight: 700,
