@@ -112,7 +112,9 @@ export default function ExportView({ masterRoster, config, onRestart, onReauctio
         <SummaryCard icon={<FileSpreadsheet size={20} />} label="Total Bid Value" value={formatInLakhs(soldPlayers.reduce((s, p) => s + p.WinningBid, 0))} color="var(--text)" />
       </div>
 
-      {soldCaptains.length > 0 && (
+      {/* Captain Auction Summary temporarily hidden
+      {soldCaptains.length > 0 && ( */}
+      {false && (
         <div style={{
           background: 'var(--card)',
           border: '1px solid var(--border)',
@@ -275,7 +277,7 @@ export default function ExportView({ masterRoster, config, onRestart, onReauctio
             title={`Re-auction ${unsoldPlayers.length} unsold players`}
           >
             <Repeat2 size={16} />
-            RE-AUCTION ({unsoldPlayers.length})
+            One More Shot({unsoldPlayers.length})
           </button>
         )}
 
