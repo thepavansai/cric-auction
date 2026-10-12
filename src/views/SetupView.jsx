@@ -54,6 +54,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
   const [imagePath, setImagePath] = useState(savedSetupDraft?.imagePath || '')
   const [teamsInput, setTeamsInput] = useState(savedSetupDraft?.teamsInput || '')
   const [basePurse, setBasePurse] = useState(savedSetupDraft?.basePurse || 100)
+  const [maxExpertsPerTeam, setMaxExpertsPerTeam] = useState(savedSetupDraft?.maxExpertsPerTeam ?? 3)
   const [rosterFile, setRosterFile] = useState(savedSetupDraft?.rosterFileName ? { name: savedSetupDraft.rosterFileName } : null)
   const [parsedCount, setParsedCount] = useState(savedSetupDraft?.parsedCount || 0)
   const [parsedRoster, setParsedRoster] = useState(savedSetupDraft?.parsedRoster || [])
@@ -106,6 +107,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
       imagePath,
       teamsInput,
       basePurse,
+      maxExpertsPerTeam,
       rosterFileName: rosterFile?.name || '',
       parsedCount,
       parsedRoster,
@@ -115,7 +117,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
       detectedHeaders
     }))
     if (!saved) setErrorMsg('Browser storage is full. Setup changes may not survive a reload.')
-  }, [imagePath, teamsInput, basePurse, rosterFile, parsedCount, parsedRoster, captainPlayerIdsInput, captainNamesInput, idColumn, detectedHeaders])
+  }, [imagePath, teamsInput, basePurse, maxExpertsPerTeam, rosterFile, parsedCount, parsedRoster, captainPlayerIdsInput, captainNamesInput, idColumn, detectedHeaders])
 
   const normalizeHeader = (value) =>
     String(value ?? '')
@@ -310,6 +312,12 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
     if (!Number.isFinite(purse) || purse <= 0) { setErrorMsg('Starting purse must be greater than zero'); return }
     if (Math.round(purse * 10) !== purse * 10) { setErrorMsg('Starting purse can have at most 1 decimal place'); return }
 
+    const expertCap = Number(maxExpertsPerTeam)
+    if (String(maxExpertsPerTeam).trim() === '' || !Number.isInteger(expertCap) || expertCap < 0) {
+      setErrorMsg('Expert limit must be a whole number of zero or more')
+      return
+    }
+
     const captainPlayerIds = parseList(captainPlayerIdsInput)
     const captainNames = parseList(captainNamesInput)
     if (captainPlayerIds.length === 0 && captainNames.length === 0) {
@@ -370,12 +378,17 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
       setStatus(null)
       return
     }
+    const expertPlayerIds = rosterWithCaptains
+      .filter(player => !player.IsCaptain && String(player.SkillLevel || '').toLowerCase().includes('expert'))
+      .map(player => player.ID)
 
     try {
       await axios.post(`${API}/api/set-config`, {
         image_path: imagePath.trim(),
         teams: teamNames,
         base_purse: purse,
+        max_experts_per_team: expertCap,
+        expert_ids: expertPlayerIds,
         captain_ids: captainPlayerIds,
         captain_names: captainNames
       })
@@ -385,6 +398,8 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
           image_path: imagePath.trim(),
           teams: teamNames,
           base_purse: purse,
+          max_experts_per_team: expertCap,
+          expert_ids: expertPlayerIds,
           captain_ids: captainPlayerIds,
           captain_names: captainNames
         })
@@ -580,6 +595,18 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
           />
         </Field>
 
+        <Field icon={<Users size={16} />} label="Expert Limit per Team" hint="Captains are excluded; FORCE bypasses this limit">
+          <input
+            className="themed-control"
+            type="number"
+            value={maxExpertsPerTeam}
+            onChange={e => setMaxExpertsPerTeam(e.target.value)}
+            min={0}
+            step={1}
+            style={inputStyle}
+          />
+        </Field>
+
         <Field icon={<Upload size={16} />} label="Master Roster (.xlsx)" hint="Upload the player registration Excel file">
           <div
             onClick={() => fileRef.current.click()}
@@ -737,6 +764,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
           />
         </Field>
 
+        {/* Captain Names input temporarily hidden
         <Field icon={<Users size={16} />} label="Captain Names" hint="Optional fallback if IDs are not available">
           <textarea
             className="themed-control"
@@ -746,6 +774,7 @@ export default function SetupView({ onComplete, branding, onBrandingChange }) {
             style={{ ...inputStyle, minHeight: '88px', resize: 'vertical' }}
           />
         </Field>
+        */}
 
         {parsedRoster.length > 0 && (captainPlayerIdsInput.trim() || captainNamesInput.trim()) && (
           <div style={{
